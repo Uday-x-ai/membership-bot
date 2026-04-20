@@ -66,6 +66,31 @@ class Database
 
             CREATE INDEX IF NOT EXISTS idx_memberships_user    ON memberships (user_id);
             CREATE INDEX IF NOT EXISTS idx_memberships_expires ON memberships (expires_at);
+
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                balance REAL    NOT NULL DEFAULT 0.0
+            );
+
+            CREATE TABLE IF NOT EXISTS transactions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL,
+                payment_id TEXT    NOT NULL UNIQUE,
+                amount     REAL    NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions (user_id);
+
+            CREATE TABLE IF NOT EXISTS pending_deposits (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- UNIQUE on user_id enforces one active pending deposit per user at a time.
+                -- upsertPendingDeposit() replaces any previous row on conflict.
+                user_id    INTEGER NOT NULL UNIQUE,
+                payment_id TEXT    NOT NULL UNIQUE,
+                message_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+            );
             SQL
         );
     }
@@ -268,5 +293,109 @@ class Database
         );
         $stmt->execute([':now' => $now, ':cutoff' => $cutoff]);
         return $stmt->fetchAll();
+    }
+
+    // -----------------------------------------------------------------------
+    // Wallet / Deposits
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get the current wallet balance for a user (0.0 if no record).
+     */
+    public function getUserBalance(int $userId): float
+    {
+        $stmt = $this->pdo->prepare('SELECT balance FROM users WHERE user_id = :uid');
+        $stmt->execute([':uid' => $userId]);
+        $row = $stmt->fetch();
+        return $row ? (float)$row['balance'] : 0.0;
+    }
+
+    /**
+     * Add amount to a user's wallet (creates the row if it doesn't exist).
+     * Returns the new balance.
+     */
+    public function incrementUserBalance(int $userId, float $amount): float
+    {
+        $this->pdo->prepare(
+            // ON INSERT: balance = :amt (new user)
+            // ON CONFLICT: balance = existing_balance + :amt  (excluded.balance == :amt)
+            'INSERT INTO users (user_id, balance) VALUES (:uid, :amt)
+             ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance'
+        )->execute([':uid' => $userId, ':amt' => $amount]);
+
+        return $this->getUserBalance($userId);
+    }
+
+    /**
+     * Check whether a payment_id has already been recorded as a transaction.
+     */
+    public function getTransactionByPaymentId(string $paymentId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM transactions WHERE payment_id = :pid');
+        $stmt->execute([':pid' => $paymentId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /**
+     * Record a completed deposit transaction.
+     */
+    public function createTransaction(int $userId, string $paymentId, float $amount): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO transactions (user_id, payment_id, amount) VALUES (:uid, :pid, :amt)'
+        )->execute([':uid' => $userId, ':pid' => $paymentId, ':amt' => $amount]);
+    }
+
+    /**
+     * Store a pending UPI deposit for a user.
+     * Any previous pending deposit for the same user is replaced.
+     */
+    public function upsertPendingDeposit(int $userId, string $paymentId, int $messageId): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO pending_deposits (user_id, payment_id, message_id)
+             VALUES (:uid, :pid, :mid)
+             ON CONFLICT(user_id) DO UPDATE
+               SET payment_id = excluded.payment_id,
+                   message_id = excluded.message_id,
+                   created_at = strftime(\'%s\',\'now\')'
+        )->execute([':uid' => $userId, ':pid' => $paymentId, ':mid' => $messageId]);
+    }
+
+    /**
+     * Fetch the pending deposit row for a given payment_id, or null.
+     */
+    public function getPendingDepositByPaymentId(string $paymentId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM pending_deposits WHERE payment_id = :pid'
+        );
+        $stmt->execute([':pid' => $paymentId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /**
+     * Fetch the pending deposit row for a given user, or null.
+     */
+    public function getPendingDepositByUserId(int $userId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM pending_deposits WHERE user_id = :uid'
+        );
+        $stmt->execute([':uid' => $userId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /**
+     * Remove a pending deposit by payment_id.
+     */
+    public function deletePendingDeposit(string $paymentId): void
+    {
+        $this->pdo->prepare(
+            'DELETE FROM pending_deposits WHERE payment_id = :pid'
+        )->execute([':pid' => $paymentId]);
     }
 }

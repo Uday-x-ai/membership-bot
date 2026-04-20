@@ -268,6 +268,23 @@ class MembershipBot
             $this->sendPlanSelector($chatId, $msgId);
             return;
         }
+
+        if ($data === 'deposit') {
+            $this->handleDeposit($chatId, $userId);
+            return;
+        }
+
+        if (str_starts_with($data, 'check_deposit:')) {
+            $paymentId = substr($data, 14);
+            $this->handleCheckDeposit($chatId, $userId, $paymentId, $msgId);
+            return;
+        }
+
+        if (str_starts_with($data, 'cancel_deposit:')) {
+            $paymentId = substr($data, 15);
+            $this->handleCancelDeposit($chatId, $paymentId, $msgId);
+            return;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -456,6 +473,253 @@ class MembershipBot
     }
 
     // -----------------------------------------------------------------------
+    // UPI / Paytm deposit flow
+    // -----------------------------------------------------------------------
+
+    /**
+     * Initiate a new UPI deposit: generate a unique payment ID, build a QR
+     * code URL, send the photo, and store a pending-deposit record.
+     */
+    private function handleDeposit(int $chatId, int $userId): void
+    {
+        $paymentId  = $this->generateRandom18Digit();
+        $last4      = substr($paymentId, -4);
+        $timeout    = (int)($this->config['deposit_timeout_seconds'] ?? 300);
+
+        $upiLink  = 'upi://pay'
+                  . '?pa=' . rawurlencode($this->config['upi_pa'] ?? '')
+                  . '&pn=' . rawurlencode($this->config['upi_pn'] ?? '')
+                  . '&tr=' . $paymentId
+                  . '&tn=' . rawurlencode($this->config['upi_tn'] ?? '');
+        $qrUrl    = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data='
+                  . rawurlencode($upiLink);
+
+        $caption  = "💳 <b>Pay via UPI / Paytm</b>\n\n"
+                  . "Scan the QR code to complete your payment.\n\n"
+                  . "<i>ID: XXXXXXXXXXXXXX{$last4}</i>\n\n"
+                  . "⏳ Complete payment within <b>" . (int)($timeout / 60) . " minutes</b>.\n"
+                  . "Press <b>✅ I've Paid</b> after completing the payment.";
+
+        $keyboard = ['inline_keyboard' => [
+            [['text' => "✅ I've Paid", 'callback_data' => "check_deposit:{$paymentId}"]],
+            [['text' => '❌ Cancel',    'callback_data' => "cancel_deposit:{$paymentId}"]],
+        ]];
+
+        $sentMsg = $this->api->sendPhoto($chatId, $qrUrl, $caption, [
+            'reply_markup' => $keyboard,
+        ]);
+
+        $messageId = (int)($sentMsg['message_id'] ?? 0);
+        if ($messageId > 0) {
+            $this->db->upsertPendingDeposit($userId, $paymentId, $messageId);
+        }
+    }
+
+    /**
+     * Check whether the UPI payment identified by $paymentId has been received.
+     * Called when the user presses "✅ I've Paid".
+     */
+    private function handleCheckDeposit(int $chatId, int $userId, string $paymentId, int $msgId): void
+    {
+        $pending = $this->db->getPendingDepositByPaymentId($paymentId);
+
+        if (!$pending || (int)$pending['user_id'] !== $userId) {
+            // Stale button – deposit was already processed or cancelled
+            try {
+                $this->api->editMessageCaption($chatId, $msgId,
+                    '❌ <b>This deposit is no longer active.</b>\n\nUse the button below to start a new one.',
+                    ['reply_markup' => ['inline_keyboard' => [
+                        [['text' => '💰 New Deposit', 'callback_data' => 'deposit']],
+                    ]]]
+                );
+            } catch (\RuntimeException) {
+                // Message may already be edited; ignore
+            }
+            return;
+        }
+
+        $timeout   = (int)($this->config['deposit_timeout_seconds'] ?? 300);
+        $createdAt = (int)$pending['created_at'];
+
+        if (time() - $createdAt > $timeout) {
+            $this->db->deletePendingDeposit($paymentId);
+            try {
+                $this->api->editMessageCaption($chatId, $msgId,
+                    '❌ <b>Payment not detected within the allowed time.</b>\n\nPlease try again.',
+                    ['reply_markup' => ['inline_keyboard' => [
+                        [['text' => '🔄 Retry Payment', 'callback_data' => 'deposit']],
+                    ]]]
+                );
+            } catch (\RuntimeException) {
+                // Ignore
+            }
+            return;
+        }
+
+        // Call the payment verification API
+        $data = $this->verifyPaytmPayment($paymentId);
+
+        if (
+            ($data['STATUS']  ?? '') === 'TXN_SUCCESS' &&
+            ($data['RESPMSG'] ?? '') === 'Txn Success'
+        ) {
+            $txnAmount = (float)($data['TXNAMOUNT'] ?? 0);
+
+            // Prevent double-processing
+            if ($this->db->getTransactionByPaymentId($paymentId)) {
+                $this->db->deletePendingDeposit($paymentId);
+                try {
+                    $this->api->editMessageCaption($chatId, $msgId,
+                        '❌ <b>This payment has already been processed.</b>\n\nPlease start a new deposit.',
+                        ['reply_markup' => ['inline_keyboard' => [
+                            [['text' => '💰 New Deposit', 'callback_data' => 'deposit']],
+                        ]]]
+                    );
+                } catch (\RuntimeException) {
+                    // Ignore
+                }
+                return;
+            }
+
+            // Credit the wallet
+            $newBalance = $this->db->incrementUserBalance($userId, $txnAmount);
+            $this->db->createTransaction($userId, $paymentId, $txnAmount);
+            $this->db->deletePendingDeposit($paymentId);
+
+            $this->notifyAdmins(
+                "💰 <b>New Deposit Received</b>\n\n"
+                . "User ID: <code>{$userId}</code>\n"
+                . "Amount: ₹" . number_format($txnAmount, 2) . "\n"
+                . "Payment ID: <code>{$paymentId}</code>\n"
+                . "Time: " . date('Y-m-d H:i:s') . ' UTC'
+            );
+
+            try {
+                $this->api->editMessageCaption($chatId, $msgId,
+                    "✅ <b>Payment of ₹" . number_format($txnAmount, 2) . " was successful!</b>\n\n"
+                    . "Your new wallet balance: <b>₹" . number_format($newBalance, 2) . "</b>",
+                    ['reply_markup' => ['inline_keyboard' => [
+                        [['text' => '💰 New Deposit', 'callback_data' => 'deposit']],
+                    ]]]
+                );
+            } catch (\RuntimeException) {
+                // Ignore
+            }
+            return;
+        }
+
+        // Payment not confirmed yet – prompt user to try again
+        $last4    = substr($paymentId, -4);
+        $elapsed  = time() - $createdAt;
+        $remaining = max(0, $timeout - $elapsed);
+        $minLeft  = (int)ceil($remaining / 60);
+
+        try {
+            $this->api->editMessageCaption($chatId, $msgId,
+                "⏳ <b>Payment not detected yet.</b>\n\n"
+                . "<i>ID: XXXXXXXXXXXXXX{$last4}</i>\n\n"
+                . "Please complete the payment and press <b>✅ I've Paid</b> again.\n"
+                . "Time remaining: ~{$minLeft} min.",
+                ['reply_markup' => ['inline_keyboard' => [
+                    [['text' => "✅ I've Paid", 'callback_data' => "check_deposit:{$paymentId}"]],
+                    [['text' => '❌ Cancel',    'callback_data' => "cancel_deposit:{$paymentId}"]],
+                ]]]
+            );
+        } catch (\RuntimeException) {
+            // Ignore
+        }
+    }
+
+    /**
+     * Cancel a pending deposit.
+     */
+    private function handleCancelDeposit(int $chatId, string $paymentId, int $msgId): void
+    {
+        $this->db->deletePendingDeposit($paymentId);
+
+        try {
+            $this->api->editMessageCaption($chatId, $msgId,
+                '🚫 <b>Payment process has been cancelled.</b>',
+                ['reply_markup' => ['inline_keyboard' => [
+                    [['text' => '💰 New Deposit', 'callback_data' => 'deposit']],
+                ]]]
+            );
+        } catch (\RuntimeException) {
+            // Ignore
+        }
+    }
+
+    /**
+     * Generate a cryptographically random 18-digit numeric string.
+     * Uses random_bytes() for compatibility with both 32-bit and 64-bit PHP.
+     */
+    private function generateRandom18Digit(): string
+    {
+        // 18 random bytes → one digit per byte to avoid any integer-size dependency.
+        // The distribution is slightly biased (256 mod 9/10 ≠ 0) but is more than
+        // sufficient for an unpredictable, unique payment tracking ID.
+        $bytes  = random_bytes(18);
+        $digits = (string)(ord($bytes[0]) % 9 + 1); // first digit: 1–9
+        for ($i = 1; $i < 18; $i++) {
+            $digits .= (string)(ord($bytes[$i]) % 10);
+        }
+        return $digits;
+    }
+
+    /**
+     * Call the Paytm payment verification endpoint and return the decoded JSON.
+     * Returns an empty array on any network or parsing error.
+     */
+    private function verifyPaytmPayment(string $paymentId): array
+    {
+        $base      = rtrim($this->config['paytm_api_base'] ?? '', '/');
+        $separator = str_contains($base, '?') ? '&' : '?';
+        $url       = $base . $separator . 'id=' . urlencode($paymentId);
+
+        $ch = curl_init($url);
+        if ($ch === false) {
+            $this->log('verifyPaytmPayment: failed to init cURL');
+            return [];
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 10,
+            CURLOPT_SSL_VERIFYPEER => true,
+        ]);
+
+        $body  = curl_exec($ch);
+        $errno = curl_errno($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($errno !== 0) {
+            $this->log("verifyPaytmPayment cURL error [{$errno}]: {$error}");
+            return [];
+        }
+
+        $decoded = json_decode((string)$body, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * Send a message to every configured admin.
+     */
+    private function notifyAdmins(string $text): void
+    {
+        foreach ($this->config['admin_ids'] as $adminId) {
+            if ($adminId <= 0) {
+                continue;
+            }
+            try {
+                $this->api->sendMessage((int)$adminId, $text);
+            } catch (\RuntimeException $e) {
+                $this->log("notifyAdmins: failed to send to {$adminId}: " . $e->getMessage());
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Admin helpers
     // -----------------------------------------------------------------------
 
@@ -495,7 +759,8 @@ class MembershipBot
                     ['text' => '📋 My Status',      'callback_data' => 'menu_status'],
                 ],
                 [
-                    ['text' => '❓ Help', 'callback_data' => 'menu_help'],
+                    ['text' => '💰 Deposit', 'callback_data' => 'deposit'],
+                    ['text' => '❓ Help',    'callback_data' => 'menu_help'],
                 ],
             ],
         ];
