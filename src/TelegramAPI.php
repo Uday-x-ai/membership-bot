@@ -91,6 +91,38 @@ class TelegramAPI
         ], $extra));
     }
 
+    public function editMessageCaption(
+        int|string $chatId,
+        int $messageId,
+        string $caption,
+        array $extra = []
+    ): array {
+        return $this->call('editMessageCaption', array_merge([
+            'chat_id'    => $chatId,
+            'message_id' => $messageId,
+            'caption'    => $caption,
+            'parse_mode' => 'HTML',
+        ], $extra));
+    }
+
+    /**
+     * Replace the media of an existing message.
+     * $media must be an InputMedia object array, e.g.:
+     *   ['type' => 'photo', 'media' => 'https://...', 'caption' => '...', 'parse_mode' => 'HTML']
+     */
+    public function editMessageMedia(
+        int|string $chatId,
+        int $messageId,
+        array $media,
+        array $extra = []
+    ): array {
+        return $this->call('editMessageMedia', array_merge([
+            'chat_id'    => $chatId,
+            'message_id' => $messageId,
+            'media'      => $media,
+        ], $extra));
+    }
+
     public function answerCallbackQuery(string $callbackQueryId, string $text = '', bool $showAlert = false): array
     {
         return $this->call('answerCallbackQuery', [

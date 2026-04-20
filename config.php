@@ -106,4 +106,28 @@ return [
 
     // Absolute path to the log file (used by both index.php and the bot)
     'log_path' => getenv('LOG_PATH') ?: __DIR__ . '/data/bot.log',
+
+    // -----------------------------------------------------------------------
+    // UPI / Paytm deposit
+    // -----------------------------------------------------------------------
+
+    // Paytm merchant ID used when verifying payment status
+    'paytm_mid' => getenv('PAYTM_MID') ?: 'YOUR_PAYTM_MID_HERE',
+
+    // Cloudflare Worker (or any proxy) URL that wraps the Paytm status API.
+    // The payment_id will be appended as "&id={payment_id}" at runtime.
+    // Example: https://paytm.example.workers.dev/?mid=MERCHANT_ID
+    'paytm_api_base' => getenv('PAYTM_API_BASE') ?: 'https://paytm.udayscriptsx.workers.dev/?mid=YOUR_PAYTM_MID_HERE',
+
+    // UPI payment address (pa field in the UPI deep-link)
+    'upi_pa' => getenv('UPI_PA') ?: 'paytmqr1aictmo962@paytm',
+
+    // Payee display name (pn field)
+    'upi_pn' => getenv('UPI_PN') ?: 'Paytm',
+
+    // Transaction note shown to the payer (tn field)
+    'upi_tn' => getenv('UPI_TN') ?: 'UdayScripts',
+
+    // How many seconds a pending deposit remains valid before timing out (default 5 min)
+    'deposit_timeout_seconds' => (int)(getenv('DEPOSIT_TIMEOUT') ?: 300),
 ];
