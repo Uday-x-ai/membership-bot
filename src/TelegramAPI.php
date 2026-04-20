@@ -63,6 +63,20 @@ class TelegramAPI
         ], $extra));
     }
 
+    public function sendPhoto(
+        int|string $chatId,
+        string $photo,
+        string $caption = '',
+        array $extra = []
+    ): array {
+        return $this->call('sendPhoto', array_merge([
+            'chat_id'    => $chatId,
+            'photo'      => $photo,
+            'caption'    => $caption,
+            'parse_mode' => 'HTML',
+        ], $extra));
+    }
+
     public function editMessageText(
         int|string $chatId,
         int $messageId,

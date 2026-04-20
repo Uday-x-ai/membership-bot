@@ -101,14 +101,22 @@ class MembershipBot
 
     private function cmdStart(int $chatId, int $userId, array $from): void
     {
-        $name = htmlspecialchars($from['first_name'] ?? 'there', ENT_QUOTES);
-        $text = "👋 <b>Welcome, {$name}!</b>\n\n"
-              . "This bot gives you access to our exclusive channel.\n\n"
-              . "Use the menu below to get started:";
+        $name    = htmlspecialchars($from['first_name'] ?? 'there', ENT_QUOTES);
+        $caption = "👋 <b>Welcome, {$name}!</b>\n\n"
+                 . "This bot gives you access to our exclusive channel.\n\n"
+                 . "Use the menu below to get started:";
 
-        $this->api->sendMessage($chatId, $text, [
-            'reply_markup' => $this->mainMenuKeyboard(),
-        ]);
+        $photo = $this->config['welcome_photo'] ?? '';
+
+        if ($photo !== '') {
+            $this->api->sendPhoto($chatId, $photo, $caption, [
+                'reply_markup' => $this->mainMenuKeyboard(),
+            ]);
+        } else {
+            $this->api->sendMessage($chatId, $caption, [
+                'reply_markup' => $this->mainMenuKeyboard(),
+            ]);
+        }
     }
 
     private function cmdBuy(int $chatId): void
