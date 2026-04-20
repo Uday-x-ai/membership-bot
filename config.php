@@ -18,6 +18,11 @@ return [
     // Bot token from @BotFather
     'bot_token' => getenv('BOT_TOKEN') ?: 'YOUR_BOT_TOKEN_HERE',
 
+    // Photo sent with the /start welcome message.
+    // Set to a Telegram file_id, a public HTTPS image URL, or leave empty to
+    // fall back to a plain text welcome message.
+    'welcome_photo' => getenv('WELCOME_PHOTO') ?: '',
+
     // Payment provider token from @BotFather  (Stripe test: use "PROVIDER_TOKEN")
     // Leave empty to disable Telegram Payments and use manual/external payments
     'payment_provider_token' => getenv('PAYMENT_PROVIDER_TOKEN') ?: '',
