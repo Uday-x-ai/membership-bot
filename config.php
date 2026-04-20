@@ -60,28 +60,28 @@ return [
     //   currency      – ISO 4217 code (USD, EUR, …)
     'plans' => [
         [
-            'id'           => 'monthly',
-            'name'         => '1 Month Membership',
-            'description'  => 'Full access to the channel for 30 days.',
-            'duration_days'=> 30,
-            'price'        => 999,   // $9.99
-            'currency'     => 'USD',
+            'id'            => 'monthly',
+            'name'          => '1 Month Membership',
+            'description'   => 'Full access to the channel for 30 days.',
+            'duration_days' => 30,
+            'price'         => 999,   // $9.99
+            'currency'      => 'USD',
         ],
         [
-            'id'           => 'quarterly',
-            'name'         => '3 Month Membership',
-            'description'  => 'Full access to the channel for 90 days.',
-            'duration_days'=> 90,
-            'price'        => 2499,  // $24.99
-            'currency'     => 'USD',
+            'id'            => 'quarterly',
+            'name'          => '3 Month Membership',
+            'description'   => 'Full access to the channel for 90 days.',
+            'duration_days' => 90,
+            'price'         => 2499,  // $24.99
+            'currency'      => 'USD',
         ],
         [
-            'id'           => 'yearly',
-            'name'         => '1 Year Membership',
-            'description'  => 'Full access to the channel for 365 days.',
-            'duration_days'=> 365,
-            'price'        => 7999,  // $79.99
-            'currency'     => 'USD',
+            'id'            => 'yearly',
+            'name'          => '1 Year Membership',
+            'description'   => 'Full access to the channel for 365 days.',
+            'duration_days' => 365,
+            'price'         => 7999,  // $79.99
+            'currency'      => 'USD',
         ],
     ],
 
@@ -96,6 +96,9 @@ return [
     // Logging
     // -----------------------------------------------------------------------
 
-    // Set to true to write incoming updates + errors to data/bot.log
-    'debug' => (bool)(getenv('BOT_DEBUG') ?: false),
+    // Set to true to write incoming updates + errors to the log file below
+    'debug'    => (bool)(getenv('BOT_DEBUG') ?: false),
+
+    // Absolute path to the log file (used by both index.php and the bot)
+    'log_path' => getenv('LOG_PATH') ?: __DIR__ . '/data/bot.log',
 ];

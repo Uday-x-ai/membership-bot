@@ -80,7 +80,8 @@ class MembershipBot
         $text   = trim($msg['text']);
 
         // Strip bot username from commands (e.g. /start@MyBot → /start)
-        $command = strtolower(explode('@', explode(' ', $text)[0])[0]);
+        $firstWord = explode(' ', $text)[0];
+        $command   = strtolower(explode('@', $firstWord)[0]);
 
         match ($command) {
             '/start'  => $this->cmdStart($chatId, $userId, $msg['from']),
@@ -521,7 +522,7 @@ class MembershipBot
         if (!($this->config['debug'] ?? false)) {
             return;
         }
-        $logPath = dirname($this->config['db_path']) . '/bot.log';
+        $logPath = $this->config['log_path'] ?? (dirname($this->config['db_path']) . '/bot.log');
         $line    = '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL;
         file_put_contents($logPath, $line, FILE_APPEND | LOCK_EX);
     }

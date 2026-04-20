@@ -206,25 +206,32 @@ class Database
      */
     public function getStats(): array
     {
-        $now = time();
+        $now        = time();
+        $todayStart = mktime(0, 0, 0);
+        $soonCutoff = $now + 3 * 86400;
 
         $totalPaid = (int)$this->pdo->query(
             "SELECT COUNT(*) FROM orders WHERE status = 'paid'"
         )->fetchColumn();
 
-        $activeMembers = (int)$this->pdo->query(
-            "SELECT COUNT(DISTINCT user_id) FROM memberships WHERE expires_at > {$now}"
-        )->fetchColumn();
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(DISTINCT user_id) FROM memberships WHERE expires_at > :now'
+        );
+        $stmt->execute([':now' => $now]);
+        $activeMembers = (int)$stmt->fetchColumn();
 
-        $todayStart = mktime(0, 0, 0);
-        $todayPaid  = (int)$this->pdo->query(
-            "SELECT COUNT(*) FROM orders WHERE status = 'paid' AND paid_at >= {$todayStart}"
-        )->fetchColumn();
+        $stmt = $this->pdo->prepare(
+            "SELECT COUNT(*) FROM orders WHERE status = 'paid' AND paid_at >= :today"
+        );
+        $stmt->execute([':today' => $todayStart]);
+        $todayPaid = (int)$stmt->fetchColumn();
 
-        $expiringSoon = (int)$this->pdo->query(
-            "SELECT COUNT(DISTINCT user_id) FROM memberships
-              WHERE expires_at > {$now} AND expires_at <= " . ($now + 3 * 86400)
-        )->fetchColumn();
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(DISTINCT user_id) FROM memberships
+              WHERE expires_at > :now AND expires_at <= :soon'
+        );
+        $stmt->execute([':now' => $now, ':soon' => $soonCutoff]);
+        $expiringSoon = (int)$stmt->fetchColumn();
 
         return [
             'total_paid'      => $totalPaid,

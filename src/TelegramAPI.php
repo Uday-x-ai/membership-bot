@@ -21,7 +21,9 @@ class TelegramAPI
     public function __construct(string $token)
     {
         if ($token === '' || $token === 'YOUR_BOT_TOKEN_HERE') {
-            throw new \InvalidArgumentException('A valid Telegram bot token is required.');
+            throw new \InvalidArgumentException(
+                'A valid Telegram bot token is required (not empty or a placeholder value).'
+            );
         }
         $this->token = $token;
     }

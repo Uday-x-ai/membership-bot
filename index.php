@@ -61,7 +61,7 @@ try {
 } catch (\Throwable $e) {
     // Log error without leaking details in the response body
     if ($config['debug'] ?? false) {
-        $logPath = dirname($config['db_path']) . '/bot.log';
+        $logPath = $config['log_path'] ?? (dirname($config['db_path']) . '/bot.log');
         $line    = '[' . date('Y-m-d H:i:s') . '] FATAL: ' . $e->getMessage()
                  . ' in ' . $e->getFile() . ':' . $e->getLine() . PHP_EOL;
         file_put_contents($logPath, $line, FILE_APPEND | LOCK_EX);
